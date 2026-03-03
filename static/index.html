@@ -31,7 +31,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>octra_wallet</title>
-<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="style.css?v=2">
 </head>
 <body>
 
@@ -352,7 +352,7 @@
       <div id="ct-call-result"></div>
     </div>
 
-    <div class="section-title">HFHE (pvac) tools</div>
+    <div class="section-title">HFHE tools</div>
     <div class="form-area">
       <div class="form-row">
         <label>encrypt integer to ciphertext</label>
@@ -362,7 +362,7 @@
         <button class="action-btn" onclick="doFheEncrypt()">encrypt</button>
       </div>
       <div class="form-row" id="fhe-enc-result-row" style="display:none">
-        <label>ciphertext (base64) - click to select</label>
+        <label>ciphertext (base64) — click to select</label>
         <textarea id="fhe-enc-output" class="code-editor" rows="3" readonly onclick="this.select()"></textarea>
       </div>
       <div class="form-row">
@@ -465,6 +465,6 @@
 <div class="footer">octra_wallet | 2026 | alpha ver. - 0.04.01</div>
 
 </div>
-<script src="wallet.js"></script>
+<script src="wallet.js?v=6"></script>
 </body>
 </html>

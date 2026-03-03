@@ -38,6 +38,7 @@ var _explorerUrl = 'https://devnet.octrascan.io';
 var _tokens = [];
 var _selectedToken = null;
 var _tokenSymbols = {};
+var _tokenDecimals = {};
 var _tokensLoaded = false;
 var _tokTxGen = 0;
 var _compiledAbi = null;
@@ -213,13 +214,30 @@ function fmtOct(raw) {
   return addCommas(s) + ' oct';
 }
 
-function fmtTokenCompact(raw) {
-  var v = parseFloat(raw);
-  if (v === 0 || isNaN(v)) return '0';
-  if (v >= 1000000000) return (v / 1000000000).toFixed(1).replace(/\.0$/, '') + 'B';
-  if (v >= 1000000) return (v / 1000000).toFixed(1).replace(/\.0$/, '') + 'M';
-  if (v >= 1000) return (v / 1000).toFixed(1).replace(/\.0$/, '') + 'K';
-  return String(v);
+function formatUnits(rawStr, decimals) {
+  var dec = parseInt(decimals) || 0;
+  var s = String(rawStr).replace(/[^0-9]/g, '');
+  if (s === '' || s === '0') return '0';
+  if (dec === 0) return s;
+  while (s.length <= dec) s = '0' + s;
+  var intPart = s.slice(0, s.length - dec);
+  var fracPart = s.slice(s.length - dec).replace(/0+$/, '');
+  if (!intPart) intPart = '0';
+  return fracPart ? intPart + '.' + fracPart : intPart;
+}
+
+function fmtTokenAmount(raw, decimals) {
+  return addCommas(formatUnits(raw, decimals));
+}
+
+function fmtTokenCompact(raw, decimals) {
+  var human = formatUnits(raw, decimals);
+  if (human === '0') return '0';
+  var n = parseFloat(human);
+  if (n >= 1000000000) return (n / 1000000000).toFixed(1).replace(/\.0$/, '') + 'B';
+  if (n >= 1000000) return (n / 1000000).toFixed(1).replace(/\.0$/, '') + 'M';
+  if (n >= 1000) return (n / 1000).toFixed(1).replace(/\.0$/, '') + 'K';
+  return addCommas(human);
 }
 
 function fmtOctCompact(raw) {
@@ -332,10 +350,11 @@ function txAmt(tx) {
   if (op === 'call' && tx.encrypted_data === 'transfer' && tx.message) {
     var contract = tx.to_ || tx.to || '';
     var sym = _tokenSymbols[contract] || '';
+    var dec = _tokenDecimals[contract] || '0';
     try {
       var p = JSON.parse(tx.message);
       if (Array.isArray(p) && p.length >= 2)
-        return { amt: fmtTokenCompact(p[1]) + (sym ? ' ' + sym : ''), cls: '', toOverride: String(p[0]) };
+        return { amt: fmtTokenCompact(p[1], dec) + (sym ? ' ' + sym : ''), cls: '', toOverride: String(p[0]) };
     } catch(e) {}
   }
   var raw = tx.amount_raw ? parseFloat(tx.amount_raw) : 0;
@@ -434,9 +453,22 @@ function dashTxLimit() {
   return Math.max(5, Math.min(Math.floor((h - overhead) / rowH), 100));
 }
 
+function renderDashTxs(txs) {
+  var h = '<table class="desktop-table"><tr><th>hash</th><th>from</th><th>to</th><th class="col-amount">amount</th><th class="col-status">status</th><th class="col-time">time</th></tr>';
+  var cards = '<div class="card-list">';
+  for (var i = 0; i < txs.length; i++) {
+    h += txRow(txs[i]);
+    cards += txCardHtml(txs[i]);
+  }
+  h += '</table>';
+  cards += '</div>';
+  $('dash-txs').innerHTML = h + cards;
+  $('dash-more').innerHTML = '<div class="dash-more-row"><a href="#" onclick="switchView(\'history\');return false">view full history</a></div>';
+}
+
 async function loadDashboard() {
   await fetchBalance();
-  await loadTokenSymbols();
+  loadTokenSymbols();
   try {
     var lim = dashTxLimit();
     var hist = await api('GET', '/history?limit=' + lim + '&offset=0');
@@ -446,16 +478,8 @@ async function loadDashboard() {
       $('dash-more').innerHTML = '';
       return;
     }
-    var h = '<table class="desktop-table"><tr><th>hash</th><th>from</th><th>to</th><th class="col-amount">amount</th><th class="col-status">status</th><th class="col-time">time</th></tr>';
-    var cards = '<div class="card-list">';
-    for (var i = 0; i < txs.length; i++) {
-      h += txRow(txs[i]);
-      cards += txCardHtml(txs[i]);
-    }
-    h += '</table>';
-    cards += '</div>';
-    $('dash-txs').innerHTML = h + cards;
-    $('dash-more').innerHTML = '<div class="dash-more-row"><a href="#" onclick="switchView(\'history\');return false">view full history</a></div>';
+    renderDashTxs(txs);
+    fetchMissingSymbols(txs).then(function() { renderDashTxs(txs); });
   } catch (e) {
     $('dash-txs').innerHTML = '<div class="staging-empty">no transactions yet</div>';
     $('dash-more').innerHTML = '';
@@ -974,9 +998,6 @@ async function doContractView() {
   }
 }
 
-
-// 
-
 async function doFheEncrypt() {
   clearResult('fhe-result');
   var val = $('fhe-enc-value').value.trim();
@@ -1004,7 +1025,6 @@ async function doFheDecrypt() {
     showResult('fhe-result', false, e.message);
   }
 }
-///
 
 async function doContractInfo() {
   clearResult('ct-info-result');
@@ -1069,8 +1089,32 @@ async function loadTokenSymbols() {
     _tokensLoaded = true;
     for (var i = 0; i < _tokens.length; i++) {
       _tokenSymbols[_tokens[i].address] = _tokens[i].symbol;
+      _tokenDecimals[_tokens[i].address] = _tokens[i].decimals || '0';
     }
   } catch(e) {}
+}
+
+async function fetchMissingSymbols(txs) {
+  var need = {};
+  for (var i = 0; i < txs.length; i++) {
+    var t = txs[i];
+    if (t.op_type === 'call' && t.encrypted_data === 'transfer') {
+      var ca = t.to_ || t.to || '';
+      if (ca && !_tokenSymbols[ca]) need[ca] = true;
+    }
+  }
+  var unknowns = Object.keys(need);
+  if (unknowns.length === 0) return;
+  await Promise.all(unknowns.map(function(ca) {
+    return Promise.all([
+      api('GET', '/contract-storage?address=' + encodeURIComponent(ca) + '&key=symbol').then(function(r) {
+        if (r && r.value) _tokenSymbols[ca] = String(r.value).slice(0, 32);
+      }).catch(function() {}),
+      api('GET', '/contract-storage?address=' + encodeURIComponent(ca) + '&key=decimals').then(function(r) {
+        if (r && r.value) _tokenDecimals[ca] = String(r.value);
+      }).catch(function() {})
+    ]);
+  }));
 }
 
 async function loadTokens() {
@@ -1081,6 +1125,7 @@ async function loadTokens() {
     _tokensLoaded = true;
     for (var i = 0; i < _tokens.length; i++) {
       _tokenSymbols[_tokens[i].address] = _tokens[i].symbol;
+      _tokenDecimals[_tokens[i].address] = _tokens[i].decimals || '0';
     }
     renderTokenList();
     loadTokenTxs();
@@ -1105,7 +1150,7 @@ function renderTokenList() {
     h += '<div class="token-header">';
     h += '<div><span class="token-symbol">' + escapeHtml(t.symbol) + '</span>';
     h += '<span class="token-name">' + escapeHtml(t.name) + '</span></div>';
-    h += '<div class="' + balCls + '">' + fmtTokenCompact(bal) + ' ' + escapeHtml(t.symbol) + '</div>';
+    h += '<div class="' + balCls + '">' + fmtTokenCompact(bal, t.decimals) + ' ' + escapeHtml(t.symbol) + '</div>';
     h += '</div>';
     h += '<div class="token-row">';
     h += '<span class="mono gray">' + short(t.address) + '</span>';
@@ -1133,24 +1178,42 @@ function closeTokenTransfer() {
   _selectedToken = null;
 }
 
+function parseUnits(humanStr, decimals) {
+  var dec = parseInt(decimals) || 0;
+  var s = String(humanStr).trim();
+  if (!s || s === '0') return '';
+  var neg = false;
+  if (s[0] === '-') { neg = true; s = s.slice(1); }
+  var parts = s.split('.');
+  var intPart = parts[0].replace(/[^0-9]/g, '') || '0';
+  var fracPart = parts.length > 1 ? parts[1].replace(/[^0-9]/g, '') : '';
+  if (fracPart.length > dec) fracPart = fracPart.slice(0, dec);
+  while (fracPart.length < dec) fracPart += '0';
+  var raw = (intPart + fracPart).replace(/^0+/, '') || '0';
+  if (raw === '0') return '';
+  return neg ? '-' + raw : raw;
+}
+
 async function doTokenTransfer() {
   clearResult('tok-transfer-result');
   if (!_selectedToken) { showResult('tok-transfer-result', false, 'no token selected'); return; }
   var to = $('tok-to').value.trim();
-  var amount = $('tok-amount').value.trim();
+  var humanAmt = $('tok-amount').value.trim();
   if (!validAddr(to)) { showResult('tok-transfer-result', false, 'invalid recipient address'); return; }
-  if (!amount || isNaN(parseInt(amount)) || parseInt(amount) <= 0) {
+  if (!humanAmt || isNaN(parseFloat(humanAmt)) || parseFloat(humanAmt) <= 0) {
     showResult('tok-transfer-result', false, 'invalid amount'); return;
   }
+  var rawAmount = parseUnits(humanAmt, _selectedToken.decimals);
+  if (!rawAmount) { showResult('tok-transfer-result', false, 'invalid amount'); return; }
   if (!validateFee('tok-fee', 'call')) { feeError('tok-transfer-result', 'tok-fee', 'call'); return; }
   try {
-    var tokBody = { token: _selectedToken.address, to: to, amount: amount };
+    var tokBody = { token: _selectedToken.address, to: to, amount: rawAmount };
     var tokFee = $('tok-fee') ? $('tok-fee').value.trim() : '';
     if (tokFee) tokBody.ou = tokFee;
     var res = await api('POST', '/token/transfer', tokBody);
     var txHash = res.hash || res.tx_hash || '';
     showResult('tok-transfer-result', true,
-      'sent ' + fmtTokenCompact(amount) + ' ' + _selectedToken.symbol + ' - tx: ' + txLink(txHash));
+      'sent ' + humanAmt + ' ' + _selectedToken.symbol + ' - tx: ' + txLink(txHash));
     $('tok-to').value = '';
     $('tok-amount').value = '';
     setTimeout(function() { loadTokens(); }, 2000);
@@ -1164,20 +1227,19 @@ async function loadTokenTxs() {
   if (!el) return;
   var gen = ++_tokTxGen;
   try {
-    var tokenAddrs = {};
-    for (var i = 0; i < _tokens.length; i++) tokenAddrs[_tokens[i].address] = true;
     var filtered = [];
     var hist = await api('GET', '/history?limit=500&offset=0');
     if (gen !== _tokTxGen) return;
     var txs = hist.transactions || [];
     for (var i = 0; i < txs.length; i++) {
       var t = txs[i];
-      if (t.op_type === 'call' && t.encrypted_data === 'transfer' && tokenAddrs[t.to_ || t.to]) filtered.push(t);
+      if (t.op_type === 'call' && t.encrypted_data === 'transfer') filtered.push(t);
     }
     if (filtered.length === 0) {
       el.innerHTML = '<div class="staging-empty">no token transactions yet</div>';
       return;
     }
+    await fetchMissingSymbols(filtered);
     var h = '<table class="desktop-table"><tr><th>hash</th><th>from</th><th>to</th><th class="col-amount">amount</th><th class="col-status">status</th><th class="col-time">time</th></tr>';
     var cards = '<div class="card-list">';
     for (var i = 0; i < filtered.length; i++) {
@@ -1192,9 +1254,21 @@ async function loadTokenTxs() {
   }
 }
 
+function renderHistoryTxs(txs) {
+  var h = '<table class="desktop-table"><tr><th>hash</th><th>from</th><th>to</th><th class="col-amount">amount</th><th class="col-status">status</th><th class="col-time">time</th></tr>';
+  var cards = '<div class="card-list">';
+  for (var i = 0; i < txs.length; i++) {
+    h += txRow(txs[i]);
+    cards += txCardHtml(txs[i]);
+  }
+  h += '</table>';
+  cards += '</div>';
+  $('history-list').innerHTML = h + cards;
+}
+
 async function loadHistory() {
   $('history-list').innerHTML = '<div class="loading">loading...</div>';
-    $('history-more').innerHTML = '';
+  $('history-more').innerHTML = '';
   loadTokenSymbols();
   try {
     var res = await api('GET', '/history?limit=' + _historyLimit + '&offset=' + _historyOffset);
@@ -1203,18 +1277,11 @@ async function loadHistory() {
       $('history-list').innerHTML = '<div class="staging-empty">no transactions yet</div>';
       return;
     }
-    var h = '<table class="desktop-table"><tr><th>hash</th><th>from</th><th>to</th><th class="col-amount">amount</th><th class="col-status">status</th><th class="col-time">time</th></tr>';
-    var cards = '<div class="card-list">';
-    for (var i = 0; i < txs.length; i++) {
-      h += txRow(txs[i]);
-      cards += txCardHtml(txs[i]);
-    }
-    h += '</table>';
-    cards += '</div>';
-    $('history-list').innerHTML = h + cards;
+    renderHistoryTxs(txs);
     if (txs.length >= _historyLimit) {
       $('history-more').innerHTML = '<button class="load-more" onclick="loadMoreHistory()">load more</button>';
     }
+    fetchMissingSymbols(txs).then(function() { renderHistoryTxs(txs); });
   } catch (e) {
     $('history-list').innerHTML = '<div class="error-box">' + e.message + '</div>';
   }

@@ -563,6 +563,23 @@ int main(int argc, char** argv) {
         res.set_content(j.dump(), "application/json");
     });
 
+    svr.Get("/api/contract-storage", [](const httplib::Request& req, httplib::Response& res) {
+        auto addr = req.get_param_value("address");
+        auto key = req.get_param_value("key");
+        if (addr.empty() || key.empty()) {
+            res.status = 400;
+            res.set_content(err_json("address and key required").dump(), "application/json");
+            return;
+        }
+        auto r = g_rpc.contract_storage(addr, key);
+        json j;
+        if (r.ok && r.result.contains("value") && !r.result["value"].is_null())
+            j["value"] = r.result["value"];
+        else
+            j["value"] = nullptr;
+        res.set_content(j.dump(), "application/json");
+    });
+
     svr.Get("/api/fee", [](const httplib::Request&, httplib::Response& res) {
         json fees;
         std::vector<std::string> ops = {"standard", "encrypt", "decrypt", "stealth", "claim", "deploy", "call"};
@@ -1463,12 +1480,16 @@ int main(int argc, char** argv) {
                 auto tr = g_rpc.contract_storage(addr, "total_supply");
                 std::string supply = (tr.ok && tr.result.contains("value") && !tr.result["value"].is_null())
                     ? tr.result.value("value", "0") : "0";
+                auto dr = g_rpc.contract_storage(addr, "decimals");
+                std::string decimals = (dr.ok && dr.result.contains("value") && !dr.result["value"].is_null())
+                    ? dr.result.value("value", "0") : "0";
                 json tok;
                 tok["address"] = addr;
                 tok["name"] = name;
                 tok["symbol"] = sym;
                 tok["total_supply"] = supply;
                 tok["balance"] = bal;
+                tok["decimals"] = decimals;
                 tok["owner"] = c.value("owner", "");
                 tokens.push_back(tok);
             }
