@@ -299,8 +299,6 @@ pvac_range_proof pvac_deserialize_range_proof(const uint8_t* data, size_t len) {
     }
 }
 
-// ═══ Aggregated Range Proof ═══
-
 pvac_agg_range_proof pvac_make_aggregated_range_proof(pvac_pubkey pk, pvac_seckey sk,
                                                        pvac_cipher ct, uint64_t value) {
     auto* arp = new pvac::AggregatedRangeProof();
@@ -346,6 +344,22 @@ int pvac_verify_range_any(pvac_pubkey pk, pvac_cipher ct,
 }
 
 void pvac_free_agg_range_proof(pvac_agg_range_proof p) { delete ARP(p); }
+
+void pvac_aes_kat(uint8_t out[16]) {
+    pvac::Sha256 h;
+    h.init();
+    const char* label = "pvac.aes.kat.key";
+    h.update(label, strlen(label));
+    uint8_t key[32];
+    h.finish(key);
+
+    pvac::AesCtr256 prg;
+    prg.init(key, 0);
+    alignas(16) uint64_t buf[2];
+    buf[0] = prg.next_u64();
+    buf[1] = prg.next_u64();
+    memcpy(out, buf, 16);
+}
 
 void pvac_free_params(pvac_params p) { delete PRM(p); }
 void pvac_free_pubkey(pvac_pubkey p) { delete PK(p); }

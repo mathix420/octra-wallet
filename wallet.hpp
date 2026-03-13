@@ -272,7 +272,7 @@ inline Wallet load_wallet_encrypted(const std::string& path,
     w.master_seed_b64 = j.value("master_seed", "");
     w.mnemonic = j.value("mnemonic", "");
     w.hd_index = j.value("hd_index", 0);
-    w.hd_version = j.value("hd_version", 1);  // legacy default
+    w.hd_version = j.value("hd_version", 1);
 
     auto raw = base64_decode(w.priv_b64);
     if (raw.size() >= 64) {
@@ -553,5 +553,4 @@ inline std::vector<ManifestEntry> scan_and_merge_oct_files() {
 #endif
     return entries;
 }
-
-} // namespace octra
+}

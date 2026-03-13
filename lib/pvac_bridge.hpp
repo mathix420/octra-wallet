@@ -199,4 +199,4 @@ public:
     void free_zero_proof(pvac_zero_proof zp) { if (zp) pvac_free_zero_proof(zp); }
 };
 
-} // namespace octra
+}

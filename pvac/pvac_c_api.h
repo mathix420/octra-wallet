@@ -80,6 +80,9 @@ void pvac_free_zero_proof(pvac_zero_proof p);
 void pvac_free_range_proof(pvac_range_proof p);
 void pvac_free_bytes(uint8_t* buf);
 
+
+void pvac_aes_kat(uint8_t out[16]);
+
 #ifdef __cplusplus
 }
 #endif

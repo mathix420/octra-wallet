@@ -90,14 +90,21 @@ async function fetchBalance() {
     var pub = bal.public_balance || '0';
     var enc = bal.encrypted_balance || '0';
     _encryptedBalanceRaw = parseInt(enc) || 0;
+    var MAX_SANE_ENC = 100000000 * 1000000;
+    var encCorrupt = (_encryptedBalanceRaw < 0 || _encryptedBalanceRaw > MAX_SANE_ENC);
+    if (encCorrupt) _encryptedBalanceRaw = 0;
+    if ($('btn-key-switch')) $('btn-key-switch').style.display = encCorrupt ? '' : 'none';
     if ($('st-balance')) $('st-balance').textContent = fmtOct(pub);
-    if ($('st-enc-balance')) $('st-enc-balance').textContent = fmtOct(enc);
+    if ($('st-enc-balance')) $('st-enc-balance').textContent = encCorrupt
+        ? 'corrupted ciphertext' : fmtOct(enc);
     if ($('st-nonce')) $('st-nonce').textContent = bal.nonce || '0';
     if ($('st-staging')) $('st-staging').textContent = bal.staging || '0';
     if ($('send-bal')) $('send-bal').textContent = fmtOct(pub);
     if ($('enc-pub-bal')) $('enc-pub-bal').textContent = fmtOct(pub);
-    if ($('enc-enc-bal')) $('enc-enc-bal').textContent = fmtOct(enc);
-    if ($('st-enc-bal-info')) $('st-enc-bal-info').textContent = fmtOct(enc);
+    if ($('enc-enc-bal')) $('enc-enc-bal').textContent = encCorrupt
+        ? 'corrupted ciphertext' : fmtOct(enc);
+    if ($('st-enc-bal-info')) $('st-enc-bal-info').textContent = encCorrupt
+        ? 'corrupted ciphertext' : fmtOct(enc);
     if ($('ct-bal')) $('ct-bal').textContent = fmtOct(pub);
     $('hdr-status').textContent = _rpcHost ? 'online | ' + networkLabel(_rpcHost) : 'online';
     $('hdr-status').className = 'right online';
@@ -303,6 +310,7 @@ function opTag(op) {
   if (op === 'private_transfer') return '<span class="private-tag">private</span>';
   if (op === 'deploy') return '<span class="contract-tag">contract_deploy</span>';
   if (op === 'call') return '<span class="contract-tag">contract_call</span>';
+  if (op === 'key_switch') return '<span class="private-tag">key_switch</span>';
   return '';
 }
 
@@ -533,6 +541,38 @@ async function refreshStealthBalance() {
   await fetchBalance();
 }
 
+async function doKeySwitch() {
+  hideAllModalPanels();
+  $('modal-sub').textContent = 'encryption key switching';
+  var h = '<div style="margin:20px 0;font-size:13px">';
+  h += 'the ciphertext is corrupted or composed incorrectly (the consensus cannot process it), a key switch must be made</div>';
+  h += '<div class="action-row">';
+  h += '<button class="action-btn" id="ks-confirm">switch</button>';
+  h += '<button class="action-btn" style="background:#8C9DB6" id="ks-cancel">cancel</button>';
+  h += '</div>';
+  $('modal-result').innerHTML = h;
+  $('modal-overlay').style.display = 'flex';
+  $('ks-cancel').onclick = function() {
+    $('modal-result').innerHTML = '';
+    $('modal-overlay').style.display = 'none';
+  };
+  $('ks-confirm').onclick = async function() {
+    $('ks-confirm').disabled = true;
+    $('ks-confirm').textContent = 'submitting...';
+    try {
+      var res = await api('POST', '/key_switch', {});
+      var txHash = res.hash || res.tx_hash || '';
+      var h2 = '<div class="result-msg result-ok" style="margin:20px 0;word-break:break-all">key switch submitted</div>';
+      h2 += '<div style="margin:12px 0;font-size:13px">tx: ' + txLinkExt(txHash) + '</div>';
+      h2 += '<div class="action-row"><button class="action-btn" id="ks-close">close</button></div>';
+      $('modal-result').innerHTML = h2;
+      $('ks-close').onclick = function() { $('modal-overlay').style.display = 'none'; fetchBalance(); };
+    } catch (e) {
+      $('modal-result').innerHTML = '<div class="result-msg result-error" style="margin:20px 0;word-break:break-all">' + e.message + '</div>';
+    }
+  };
+}
+
 async function doEncrypt() {
   clearResult('enc-result');
   var amount = $('enc-amount').value.trim();
@@ -691,9 +731,21 @@ async function doStealthClaim(ids) {
     }
     doStealthScan();
     loadDashboard();
+    pollPendingClaims();
   } catch (e) {
     logStealth('error: ' + e.message, 'log-err');
   }
+}
+
+function pollPendingClaims() {
+  if (Object.keys(_pendingClaimIds).length === 0) return;
+  var attempts = 0;
+  var poll = setInterval(async function() {
+    attempts++;
+    if (attempts > 6 || Object.keys(_pendingClaimIds).length === 0) { clearInterval(poll); return; }
+    await doStealthScan();
+    await loadDashboard();
+  }, 12000);
 }
 
 async function refreshContractBalance() {
@@ -1820,7 +1872,6 @@ async function modalFinishSetup() {
       }
       var resp = await api('POST', '/wallet/import', importBody);
       if (resp.switched === false) {
-        /* imported as additional wallet — don't reload, just refresh list [lambda0xe] */
         $('modal-overlay').style.display = 'none';
         showResult('wallet-mgmt-result', true, 'imported: ' + (resp.address || '').substring(0, 16) + '...');
         loadAccountList();
@@ -1961,7 +2012,6 @@ async function init() {
       $('modal-overlay').style.display = 'flex';
       return;
     }
-    /* multiple wallets or single unknown - show picker [lambda0xe] */
     showAccountPicker(wallets);
   } catch (e) {
     $('modal-overlay').style.display = 'flex';
