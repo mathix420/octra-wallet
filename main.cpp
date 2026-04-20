@@ -1489,9 +1489,7 @@ int main(int argc, char** argv) {
 
             steps.push_back("[6/8] encoding proofs");
 
-            uint8_t r_amt[32];
-            octra::random_bytes(r_amt, 32);
-            auto amt_commit = g_pvac.pedersen_commit((uint64_t)raw, r_amt);
+            auto amt_commit = g_pvac.pedersen_commit((uint64_t)raw, r_blind);
             std::string amt_commit_b64 = octra::base64_encode(amt_commit.data(), 32);
             t.step("pedersen_amount_commitment");
 
