@@ -42,7 +42,7 @@ jobs:
       - name: Install toolchain
         run: |
           pacman -Syu --noconfirm
-          pacman -S --noconfirm base-devel sudo git nodejs
+          pacman -S --noconfirm base-devel sudo git nodejs python
 
       - name: Create build user
         run: |
