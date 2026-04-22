@@ -53,7 +53,9 @@ jobs:
         run: |
           set -eux
           cd packaging/aur
-          URL="https://github.com/${GITHUB_REPOSITORY}/archive/refs/tags/${{ steps.meta.outputs.gittag }}.tar.gz"
+          # Upstream is the source of truth for the AUR package. The tag
+          # pushed to this fork must already exist on octra-labs/webcli.
+          URL="https://github.com/octra-labs/webcli/archive/refs/tags/${{ steps.meta.outputs.gittag }}.tar.gz"
           curl -fsSL "${URL}" -o "source.tar.gz"
           SRC_SHA=$(sha256sum source.tar.gz | cut -d' ' -f1)
           SCRIPT_SHA=$(sha256sum octra-wallet.sh | cut -d' ' -f1)
