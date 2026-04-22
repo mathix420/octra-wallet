@@ -1,0 +1,40 @@
+# Maintainer: Octra Labs <contact@octra.org>
+pkgname=octra-wallet
+pkgver=0.04.10.alpha
+_gittag=v0.04.10-alpha
+pkgrel=1
+pkgdesc="Octra network web client (webcli): send txs, encrypt/decrypt balances, stealth txs"
+arch=('x86_64' 'aarch64')
+url="https://github.com/octra-labs/webcli"
+license=('GPL-2.0-or-later')
+depends=('openssl' 'leveldb' 'gcc-libs' 'glibc')
+makedepends=('gcc' 'make')
+provides=('octra-wallet')
+conflicts=('octra-wallet-bin' 'octra-wallet-git')
+source=("${pkgname}-${pkgver}.tar.gz::${url}/archive/refs/tags/${_gittag}.tar.gz"
+        "octra-wallet.sh")
+sha256sums=('SKIP'
+            'SKIP')
+
+build() {
+    cd "${srcdir}/webcli-${_gittag#v}"
+    make
+}
+
+package() {
+    cd "${srcdir}/webcli-${_gittag#v}"
+
+    # binary and bundled libpvac.so keep their relative rpath ($ORIGIN/pvac/build)
+    install -Dm755 octra_wallet "${pkgdir}/usr/lib/${pkgname}/octra_wallet"
+    install -Dm755 pvac/build/libpvac.so "${pkgdir}/usr/lib/${pkgname}/pvac/build/libpvac.so"
+
+    # static assets (served at /)
+    install -d "${pkgdir}/usr/share/${pkgname}"
+    cp -r static "${pkgdir}/usr/share/${pkgname}/static"
+
+    # user-facing launcher
+    install -Dm755 "${srcdir}/octra-wallet.sh" "${pkgdir}/usr/bin/octra-wallet"
+
+    # license
+    install -Dm644 COPYING "${pkgdir}/usr/share/licenses/${pkgname}/COPYING"
+}

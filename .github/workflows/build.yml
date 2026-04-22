@@ -1,0 +1,108 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-source:
+    name: Build from source (Arch)
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+    steps:
+      - name: Install toolchain
+        run: |
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm base-devel openssl leveldb git namcap nodejs
+
+      - uses: actions/checkout@v6
+
+      - name: Compile
+        run: make
+
+      - name: Smoke test binary
+        run: |
+          file ./octra_wallet
+          ldd ./octra_wallet
+
+      - name: Lint PKGBUILD
+        run: |
+          cd packaging/aur
+          namcap PKGBUILD || true
+
+  build-package:
+    name: Build AUR package
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+    steps:
+      - name: Install toolchain
+        run: |
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm base-devel sudo git nodejs
+
+      - name: Create build user
+        run: |
+          useradd -m builder
+          echo 'builder ALL=(ALL) NOPASSWD: ALL' >> /etc/sudoers
+
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Stage PKGBUILD against current commit
+        run: |
+          set -eux
+          SHA="${GITHUB_SHA}"
+          SHORT="${SHA:0:7}"
+
+          # git archive extracts into webcli-<SHA>/, matching the PKGBUILD's
+          # `webcli-${_gittag#v}` layout when _gittag is the SHA (no 'v' prefix).
+          git archive --format=tar.gz --prefix="webcli-${SHA}/" -o "webcli-${SHA}.tar.gz" "${SHA}"
+
+          STAGE="$(mktemp -d)"
+          cp packaging/aur/octra-wallet.sh "${STAGE}/octra-wallet.sh"
+          cp "webcli-${SHA}.tar.gz" "${STAGE}/"
+
+          # Write a CI PKGBUILD that reuses the packaged build()/package()
+          # logic but points `source` at the local archive.
+          python3 - "${STAGE}/PKGBUILD" "${SHA}" "${SHORT}" <<'PY'
+          import pathlib, sys
+          out, sha, short = sys.argv[1], sys.argv[2], sys.argv[3]
+          src = pathlib.Path("packaging/aur/PKGBUILD").read_text().splitlines()
+          new = []
+          skip_source = False
+          for line in src:
+              if line.startswith("pkgver="):
+                  new.append(f"pkgver=0.0.0.ci{short}")
+              elif line.startswith("_gittag="):
+                  new.append(f"_gittag={sha}")
+              elif line.startswith("source=("):
+                  new.append(f'source=("webcli-{sha}.tar.gz"')
+                  new.append('        "octra-wallet.sh")')
+                  skip_source = True
+              elif skip_source and line.strip().endswith(")"):
+                  skip_source = False
+              elif skip_source:
+                  continue
+              else:
+                  new.append(line)
+          pathlib.Path(out).write_text("\n".join(new) + "\n")
+          PY
+
+          chown -R builder:builder "${STAGE}"
+          echo "STAGE=${STAGE}" >> "${GITHUB_ENV}"
+
+      - name: Run makepkg
+        run: |
+          cd "${STAGE}"
+          sudo -u builder makepkg -s --noconfirm --skipchecksums
+
+      - name: Upload built package
+        uses: actions/upload-artifact@v7
+        with:
+          name: octra-wallet-ci-pkg
+          path: ${{ env.STAGE }}/*.pkg.tar.zst
