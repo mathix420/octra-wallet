@@ -1,7 +1,9 @@
 # Maintainer: Octra Labs <contact@octra.org>
 pkgname=octra-wallet
-pkgver=0.04.10.alpha
-_gittag=v0.04.10-alpha
+# pkgver format: <commit-date:YYYYMMDD>.<short-sha>  e.g. 20260422.a42c32e
+# Both pkgver and _commit are rewritten by the release workflow.
+pkgver=0.0.0.placeholder
+_commit=0000000000000000000000000000000000000000
 pkgrel=1
 pkgdesc="Octra network web client (webcli): send txs, encrypt/decrypt balances, stealth txs"
 arch=('x86_64' 'aarch64')
@@ -11,18 +13,18 @@ depends=('openssl' 'leveldb' 'gcc-libs' 'glibc')
 makedepends=('gcc' 'make')
 provides=('octra-wallet')
 conflicts=('octra-wallet-bin' 'octra-wallet-git')
-source=("${pkgname}-${pkgver}.tar.gz::${url}/archive/refs/tags/${_gittag}.tar.gz"
+source=("${pkgname}-${_commit}.tar.gz::${url}/archive/${_commit}.tar.gz"
         "octra-wallet.sh")
 sha256sums=('SKIP'
             'SKIP')
 
 build() {
-    cd "${srcdir}/webcli-${_gittag#v}"
+    cd "${srcdir}/webcli-${_commit}"
     make
 }
 
 package() {
-    cd "${srcdir}/webcli-${_gittag#v}"
+    cd "${srcdir}/webcli-${_commit}"
 
     # binary and bundled libpvac.so keep their relative rpath ($ORIGIN/pvac/build)
     install -Dm755 octra_wallet "${pkgdir}/usr/lib/${pkgname}/octra_wallet"

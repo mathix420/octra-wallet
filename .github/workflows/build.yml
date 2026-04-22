@@ -63,7 +63,7 @@ jobs:
           SHORT="${SHA:0:7}"
 
           # git archive extracts into webcli-<SHA>/, matching the PKGBUILD's
-          # `webcli-${_gittag#v}` layout when _gittag is the SHA (no 'v' prefix).
+          # `webcli-${_commit}` layout.
           git archive --format=tar.gz --prefix="webcli-${SHA}/" -o "webcli-${SHA}.tar.gz" "${SHA}"
 
           STAGE="$(mktemp -d)"
@@ -81,8 +81,8 @@ jobs:
           for line in src:
               if line.startswith("pkgver="):
                   new.append(f"pkgver=0.0.0.ci{short}")
-              elif line.startswith("_gittag="):
-                  new.append(f"_gittag={sha}")
+              elif line.startswith("_commit="):
+                  new.append(f"_commit={sha}")
               elif line.startswith("source=("):
                   new.append(f'source=("webcli-{sha}.tar.gz"')
                   new.append('        "octra-wallet.sh")')

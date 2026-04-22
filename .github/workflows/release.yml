@@ -1,9 +1,12 @@
 name: release
 
 on:
-  push:
-    tags:
-      - 'v*'
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: "Upstream octra-labs/webcli commit SHA to package (default: upstream main HEAD)"
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -16,12 +19,13 @@ jobs:
       image: archlinux:latest
     outputs:
       pkgver: ${{ steps.meta.outputs.pkgver }}
-      gittag: ${{ steps.meta.outputs.gittag }}
+      sha: ${{ steps.meta.outputs.sha }}
+      short: ${{ steps.meta.outputs.short }}
     steps:
       - name: Install toolchain
         run: |
           pacman -Syu --noconfirm
-          pacman -S --noconfirm base-devel sudo git openssh nodejs python
+          pacman -S --noconfirm base-devel sudo git openssh nodejs python jq
 
       - name: Create build user
         run: |
@@ -30,37 +34,60 @@ jobs:
 
       - uses: actions/checkout@v6
 
-      - name: Derive version metadata
+      - name: Resolve upstream commit and derive pkgver
         id: meta
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          INPUT_SHA: ${{ inputs.commit }}
         run: |
-          set -eux
-          GITTAG="${GITHUB_REF_NAME}"            # e.g. v0.04.10-alpha
-          VER="${GITTAG#v}"                      # 0.04.10-alpha
-          PKGVER="${VER//-/.}"                   # 0.04.10.alpha  (pkgver forbids '-')
-          echo "gittag=${GITTAG}" >> "${GITHUB_OUTPUT}"
+          set -eu
+          UPSTREAM=octra-labs/webcli
+
+          if [ -n "${INPUT_SHA}" ]; then
+            SHA="${INPUT_SHA}"
+          else
+            SHA=$(curl -fsSL \
+                    -H "Authorization: Bearer ${GH_TOKEN}" \
+                    -H "Accept: application/vnd.github+json" \
+                    "https://api.github.com/repos/${UPSTREAM}/commits/main" \
+                  | jq -r .sha)
+          fi
+
+          # Verify the commit exists and grab its author date (ISO-8601).
+          META=$(curl -fsSL \
+                   -H "Authorization: Bearer ${GH_TOKEN}" \
+                   -H "Accept: application/vnd.github+json" \
+                   "https://api.github.com/repos/${UPSTREAM}/commits/${SHA}")
+          SHA=$(echo "${META}" | jq -r .sha)
+          DATE=$(echo "${META}" | jq -r .commit.author.date)       # 2026-04-22T15:10:37Z
+          YMD="${DATE:0:4}${DATE:5:2}${DATE:8:2}"                  # 20260422
+          SHORT="${SHA:0:7}"
+          PKGVER="${YMD}.${SHORT}"
+
+          echo "sha=${SHA}"       >> "${GITHUB_OUTPUT}"
+          echo "short=${SHORT}"   >> "${GITHUB_OUTPUT}"
           echo "pkgver=${PKGVER}" >> "${GITHUB_OUTPUT}"
 
-      - name: Rewrite PKGBUILD for this tag
+          echo "Resolved upstream ${UPSTREAM}@${SHA} -> pkgver=${PKGVER}"
+
+      - name: Rewrite PKGBUILD for this commit
         run: |
           set -eux
           cd packaging/aur
           sed -i \
             -e "s|^pkgver=.*|pkgver=${{ steps.meta.outputs.pkgver }}|" \
-            -e "s|^_gittag=.*|_gittag=${{ steps.meta.outputs.gittag }}|" \
+            -e "s|^_commit=.*|_commit=${{ steps.meta.outputs.sha }}|" \
             PKGBUILD
 
       - name: Fetch upstream tarball and record sha256
         run: |
           set -eux
           cd packaging/aur
-          # Upstream is the source of truth for the AUR package. The tag
-          # pushed to this fork must already exist on octra-labs/webcli.
-          URL="https://github.com/octra-labs/webcli/archive/refs/tags/${{ steps.meta.outputs.gittag }}.tar.gz"
+          URL="https://github.com/octra-labs/webcli/archive/${{ steps.meta.outputs.sha }}.tar.gz"
           curl -fsSL "${URL}" -o "source.tar.gz"
           SRC_SHA=$(sha256sum source.tar.gz | cut -d' ' -f1)
           SCRIPT_SHA=$(sha256sum octra-wallet.sh | cut -d' ' -f1)
 
-          # Replace the SKIP lines with real sha256 sums.
           python3 - "$SRC_SHA" "$SCRIPT_SHA" <<'PY'
           import sys, pathlib
           src, script = sys.argv[1], sys.argv[2]
@@ -72,6 +99,9 @@ jobs:
               )
           )
           PY
+
+      - name: Mark workspace as a safe git directory
+        run: git config --global --add safe.directory "${GITHUB_WORKSPACE}"
 
       - name: Build package
         run: |
@@ -95,9 +125,14 @@ jobs:
             packaging/aur/.SRCINFO
             packaging/aur/octra-wallet.sh
 
-      - name: Upload built .pkg.tar.zst to GitHub release
+      - name: Create GitHub release for this commit
         uses: softprops/action-gh-release@v3
         with:
+          tag_name: pkg-${{ steps.meta.outputs.pkgver }}
+          name: octra-wallet ${{ steps.meta.outputs.pkgver }}
+          body: |
+            Packaged from upstream commit
+            [`${{ steps.meta.outputs.short }}`](https://github.com/octra-labs/webcli/commit/${{ steps.meta.outputs.sha }}).
           files: packaging/aur/*.pkg.tar.zst
 
   publish-aur:
@@ -120,5 +155,5 @@ jobs:
           commit_username: ${{ secrets.AUR_USERNAME }}
           commit_email: ${{ secrets.AUR_EMAIL }}
           ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
-          commit_message: "Release ${{ needs.build-and-release.outputs.gittag }}"
+          commit_message: "Release ${{ needs.build-and-release.outputs.pkgver }} (upstream ${{ needs.build-and-release.outputs.short }})"
           ssh_keyscan_types: rsa,ed25519
