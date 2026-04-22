@@ -1,0 +1,65 @@
+name: upstream-watch
+
+on:
+  schedule:
+    # Poll upstream hourly. Adjust or remove if you want a different cadence.
+    - cron: '0 * * * *'
+  workflow_dispatch:
+
+permissions:
+  actions: write   # needed to dispatch release.yml
+  contents: read
+
+jobs:
+  check:
+    name: Trigger release on new upstream commit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve upstream main HEAD
+        id: upstream
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -eu
+          SHA=$(gh api repos/octra-labs/webcli/commits/main --jq .sha)
+          echo "sha=${SHA}"           >> "${GITHUB_OUTPUT}"
+          echo "short=${SHA:0:7}"     >> "${GITHUB_OUTPUT}"
+          echo "Upstream main -> ${SHA}"
+
+      - name: Find last packaged short SHA
+        id: last
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -eu
+          # Release tags are pkg-YYYYMMDD.<shortsha>; pick the newest matching tag.
+          TAG=$(gh release list \
+                  --repo "${GITHUB_REPOSITORY}" \
+                  --limit 30 \
+                  --json tagName --jq '.[].tagName' \
+                | grep -E '^pkg-[0-9]{8}\.[0-9a-f]{7}$' \
+                | head -n1 || true)
+          if [ -z "${TAG}" ]; then
+            echo "short="              >> "${GITHUB_OUTPUT}"
+            echo "No prior pkg-* release found."
+          else
+            SHORT="${TAG##*.}"
+            echo "short=${SHORT}"      >> "${GITHUB_OUTPUT}"
+            echo "Last packaged: ${SHORT}"
+          fi
+
+      - name: Dispatch release workflow
+        if: steps.upstream.outputs.short != steps.last.outputs.short
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -eu
+          echo "Upstream ${{ steps.upstream.outputs.short }} != last ${{ steps.last.outputs.short }}; triggering release."
+          gh workflow run release.yml \
+            --repo "${GITHUB_REPOSITORY}" \
+            --ref main \
+            -f commit="${{ steps.upstream.outputs.sha }}"
+
+      - name: No-op (already up to date)
+        if: steps.upstream.outputs.short == steps.last.outputs.short
+        run: echo "Upstream unchanged since last release (${{ steps.last.outputs.short }})."
